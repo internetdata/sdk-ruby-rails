@@ -1,0 +1,69 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Required for RubyGems trusted publishing, which exchanges this token for
+      # a short-lived API key so no secret has to be stored. Free on public
+      # repositories.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4'
+          bundler-cache: true
+      # The tag only TRIGGERS this; RubyGems publishes whatever the gemspec says.
+      # Without this check, tagging v1.0.1 against a 1.0.0 gemspec republishes
+      # 1.0.0, or fails as "already pushed" with a confusing message.
+      - name: Tag must match the gem version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(ruby -Ilib -e 'require "internetdata/rails/version"; print InternetData::Rails::VERSION')"
+          if [ "$tag" != "$version" ] ; then
+            echo "tag $tag does not match InternetData::Rails::VERSION $version" >&2
+            exit 1
+          fi
+      - run: bundle exec rake test
+      # No floating major tag exists for this action, so it is pinned exactly.
+      - uses: rubygems/configure-rubygems-credentials@v2.1.0
+      - name: Build and push
+        run: |
+          # `gem build -o` writes the file but will not create its parent,
+          # so a clean checkout fails on ENOENT before it ever reaches push.
+          mkdir -p pkg
+          gem build internetdata-rails.gemspec -o "pkg/internetdata-rails-${GITHUB_REF_NAME#v}.gem"
+          gem push "pkg/internetdata-rails-${GITHUB_REF_NAME#v}.gem"
+
+  # This version's section of CHANGELOG.md, as the tag's GitHub Release. It
+  # waits for the publish, so no release page names a version the registry
+  # cannot serve, and a re-run edits the release rather than failing on it.
+  github-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: GitHub Release from CHANGELOG.md
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '/^## /{ if (found) exit; found = ($2 == v); next } found' CHANGELOG.md > notes.md
+          if ! grep -q '^### ' notes.md ; then
+            echo "CHANGELOG.md has no section for ${version}" >&2
+            exit 1
+          fi
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 ; then
+            gh release edit "$GITHUB_REF_NAME" --notes-file notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag
+          fi

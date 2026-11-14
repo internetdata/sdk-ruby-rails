@@ -1,0 +1,337 @@
+# frozen_string_literal: true
+
+require_relative 'test_helper'
+require 'rack/builder'
+require 'rack/mock_request'
+
+# The Rack middleware, driven through a real Rack stack, plus the shared corpus.
+#
+# A Rack::MockRequest connects from 127.0.0.1 by default, which is a bogon and
+# is answered locally without a request. Anything that needs a served answer
+# therefore has to arrive wearing a public address, through a selector.
+class MiddlewareTest < Minitest::Test
+  include TestHelper
+
+  PUBLIC_IP = '45.83.91.1'
+  MIDDLEWARE = TestHelper::CORPUS['middleware']
+
+  APP = ->(env) do
+    lookup = InternetData::Rails.lookup(env)
+    body = JSON.generate(
+      'ip' => lookup&.ip,
+      'country' => lookup&.result&.location&.fetch('country', nil),
+      'bogon' => lookup&.result&.bogon?,
+      'error' => lookup&.error&.class&.name,
+      'attached' => !lookup.nil?
+    )
+    [200, { 'content-type' => 'application/json' }, [body]]
+  end
+
+  def setup
+    Typhoeus::Expectation.clear
+  end
+
+  def teardown
+    Typhoeus::Expectation.clear
+  end
+
+  def serving(body, status: 200)
+    ip = body['ip'] || PUBLIC_IP
+    calls = stub_lookups(ip => { status: status, body: body })
+    [InternetData::Client.new(cache: false, retries: 0), calls]
+  end
+
+  # Rack::MockRequest sets NO REMOTE_ADDR, so without this every request would
+  # resolve to nothing and exercise the unresolvable path instead of the one
+  # under test.
+  def call(headers: {}, env: {}, remote_addr: '127.0.0.1', **options)
+    stack = InternetData::Rails::Middleware.new(APP, **options)
+    env_headers = headers.transform_keys { |k| "HTTP_#{k.upcase.tr('-', '_')}" }
+    response = Rack::MockRequest.new(stack)
+                                .get('/', env_headers.merge(env)
+                                                     .merge('REMOTE_ADDR' => remote_addr))
+    [response.status, JSON.parse(response.body.empty? ? '{}' : response.body)]
+  end
+
+  # The README's Rack form, an API key from the environment and nothing else,
+  # set and unset: every other test hands the middleware a client of its own.
+  def test_it_builds_as_the_readme_does_from_a_key_alone
+    [['k_readme', 'Bearer k_readme'], [nil, nil]].each do |key, header|
+      seen = []
+      Typhoeus.stub(%r{\A#{Regexp.escape(BASE_URL)}/}).and_return do |request|
+        seen << request.options[:headers]['Authorization']
+        json_response(200, answer(PUBLIC_IP))
+      end
+      saved = ENV.fetch('INTERNETDATA_API_KEY', nil)
+      ENV['INTERNETDATA_API_KEY'] = key
+      app = Rack::Builder.new do
+        use InternetData::Rails::Middleware, api_key: ENV['INTERNETDATA_API_KEY']
+        run APP
+      end
+      ENV['INTERNETDATA_API_KEY'] = saved
+
+      body = JSON.parse(Rack::MockRequest.new(app).get('/', 'REMOTE_ADDR' => PUBLIC_IP).body)
+
+      assert_equal 'AT', body['country'], key.inspect
+      assert_equal [header], seen, key.inspect
+      Typhoeus::Expectation.clear
+    end
+  end
+
+  def test_enriches_the_request_and_leaves_the_decision_to_the_app
+    client, calls = serving(answer(PUBLIC_IP))
+    status, body = call(client: client, ip_selector: ->(_r) { PUBLIC_IP })
+
+    assert_equal 200, status
+    assert body['attached']
+    assert_equal 'AT', body['country']
+    assert_equal PUBLIC_IP, body['ip']
+    assert_equal 1, calls.length
+  end
+
+  def test_blocks_when_the_condition_matches_and_the_app_never_runs
+    client, = serving(answer(PUBLIC_IP))
+    status, body = call(client: client, ip_selector: ->(_r) { PUBLIC_IP },
+                        block_condition: { 'location' => { 'country' => %w[CU IR AT] } })
+
+    assert_equal 403, status
+    assert_equal({ 'error' => 'access denied' }, body)
+    assert_nil body['attached'], 'the app answered a blocked request'
+  end
+
+  def test_on_blocked_replaces_the_refusal
+    client, = serving(answer(PUBLIC_IP))
+    refusal = lambda do |_request, lookup|
+      [451, { 'content-type' => 'application/json' },
+       [JSON.generate('why' => lookup.result.location['country'])]]
+    end
+    status, body = call(client: client, ip_selector: ->(_r) { PUBLIC_IP },
+                        block_condition: { 'location' => { 'country' => 'AT' } }, on_blocked: refusal)
+
+    assert_equal 451, status
+    assert_equal({ 'why' => 'AT' }, body)
+  end
+
+  def test_skip_leaves_the_request_untouched
+    client, calls = serving(answer(PUBLIC_IP))
+    status, body = call(client: client, ip_selector: ->(_r) { PUBLIC_IP },
+                        block_condition: { 'location' => { 'country' => 'AT' } }, skip: ->(_r) { true })
+
+    assert_equal 200, status
+    refute body['attached']
+    assert_empty calls
+  end
+
+  def test_a_failing_lookup_lets_the_visitor_through
+    client, = serving({ 'ip' => PUBLIC_IP, 'error' => 'boom' }, status: 500)
+    status, body = call(client: client, ip_selector: ->(_r) { PUBLIC_IP },
+                        block_condition: { 'location' => { 'country' => 'AT' } })
+
+    assert_equal 200, status
+    assert_match(/InternetData/, body['error'])
+  end
+
+  # Rails' RemoteIp leaves the trusted answer on the env, and Rack::Request#ip
+  # does NOT read it - so using Rack's alone would silently ignore whatever
+  # trusted_proxies the application configured. This is what makes the Railtie's
+  # placement after RemoteIp mean anything.
+  def test_rails_own_remote_ip_wins_over_racks
+    client, calls = serving(answer(PUBLIC_IP))
+    _, body = call(client: client,
+                   env: { 'action_dispatch.remote_ip' => PUBLIC_IP },
+                   headers: { 'X-Forwarded-For' => '203.0.113.9' })
+
+    assert_equal PUBLIC_IP, body['ip']
+    assert_equal 1, calls.length
+  end
+
+  # Rack's own `ip` reads X-Forwarded-For only when the connecting address is a
+  # trusted proxy, as the loopback REMOTE_ADDR here is.
+  def test_racks_default_reads_a_forwarded_header_from_a_trusted_proxy
+    client, calls = serving(answer(PUBLIC_IP))
+    _, body = call(client: client, headers: { 'X-Forwarded-For' => PUBLIC_IP })
+
+    assert_equal PUBLIC_IP, body['ip']
+    assert_equal 1, calls.length
+
+    header_client, header_calls = serving(answer('45.83.91.9'))
+    _, body = call(client: header_client,
+                   ip_selector: InternetData::Rails.header_ip_selector('CF-Connecting-IP'),
+                   headers: { 'CF-Connecting-IP' => '45.83.91.9',
+                              'X-Forwarded-For' => PUBLIC_IP })
+
+    assert_equal '45.83.91.9', body['ip'], 'a named header must win over the chain'
+    assert_equal 1, header_calls.length
+  end
+
+  # From a peer that is not a trusted proxy, Rack 3's `ip` is that peer, whatever
+  # X-Forwarded-For says.
+  def test_racks_default_ignores_a_forwarded_header_from_a_public_peer
+    client, calls = serving(answer('45.83.91.9'))
+    _, body = call(client: client, remote_addr: '45.83.91.9', headers: { 'X-Forwarded-For' => PUBLIC_IP })
+
+    assert_equal '45.83.91.9', body['ip']
+    assert_equal 1, calls.length
+  end
+
+  # Rails' RemoteIp believes X-Forwarded-For, Client-IP and, through Rack 3,
+  # Forwarded from any peer outside trusted_proxies, so with nothing in front of
+  # the app server a visitor names the address looked up. The default still
+  # reads it; the middleware says so once. 2.1.9 said nothing for Forwarded.
+  def test_warns_once_when_a_public_peer_names_the_visitor_to_rails
+    client, calls = serving(answer(PUBLIC_IP))
+    headers = { 'X-Forwarded-For' => PUBLIC_IP, 'Client-IP' => PUBLIC_IP, 'Forwarded' => "for=#{PUBLIC_IP}" }
+    headers.each do |header, value|
+      warnings = []
+      stack = remote_ip_stack(client: client, on_warn: ->(m) { warnings << m })
+      2.times do
+        body = request_through(stack, remote_addr: '45.83.91.9', headers: { header => value })
+        assert_equal PUBLIC_IP, body['ip'], 'the default must keep reading remote_ip'
+      end
+
+      assert_equal 1, warnings.length, header
+      assert_includes warnings.first, "carrying #{header} came from 45.83.91.9"
+      assert_includes warnings.first, 'trusted_proxies'
+    end
+    assert_equal 6, calls.length
+  end
+
+  # nginx writes X-Forwarded-For and passes a visitor's Forwarded through, and
+  # Rack 3 reads Forwarded first, for Rack::Request#ip and RemoteIp alike, so a
+  # forged one names the visitor even from a trusted proxy. The default still
+  # reads it; the middleware says so once, in Rails and in a bare Rack app.
+  # From actionpack 8.1.4.1 RemoteIp refuses the disagreement itself
+  # (GHSA-2gff-2mmg-m73p), and the middleware leaves that refusal, Rails' 400,
+  # to Rails, as the app's own remote_ip call would.
+  def test_warns_once_when_a_trusted_proxy_passes_a_forwarded_header_through
+    client, calls = serving(answer(PUBLIC_IP))
+    nginx = { 'Forwarded' => "for=#{PUBLIC_IP}", 'X-Forwarded-For' => '45.83.91.9' }
+    [true, false].each do |rails|
+      warnings = []
+      options = { client: client, on_warn: ->(m) { warnings << m } }
+      stack = rails ? remote_ip_stack(**options) : InternetData::Rails::Middleware.new(APP, **options)
+      2.times do
+        if rails && remote_ip_refuses_a_disagreeing_forwarded?
+          assert_raises(ActionDispatch::RemoteIp::IpSpoofAttackError) do
+            request_through(stack, remote_addr: '10.0.0.5', headers: nginx)
+          end
+        else
+          body = request_through(stack, remote_addr: '10.0.0.5', headers: nginx)
+          assert_equal PUBLIC_IP, body['ip'], 'the default must keep reading what Rack reads'
+        end
+      end
+
+      assert_equal 1, warnings.length, rails ? 'rails' : 'rack'
+      assert_includes warnings.first, 'through 10.0.0.5'
+      assert_includes warnings.first, 'proxy_set_header Forwarded "";'
+      assert_includes warnings.first, 'Rack::Request.forwarded_priority = [:x_forwarded]'
+    end
+    assert_equal remote_ip_refuses_a_disagreeing_forwarded? ? 2 : 4, calls.length
+  end
+
+  def remote_ip_refuses_a_disagreeing_forwarded?
+    require 'action_dispatch'
+    ActionPack.gem_version >= Gem::Version.new('8.1.4.1')
+  end
+
+  # Each fix the warning names finds the visitor, and none warns: the header
+  # cleared at the proxy, or Rack told to read X-Forwarded-For alone.
+  def test_no_forwarded_warning_once_the_header_is_cleared_or_rack_reads_x_forwarded_for_alone
+    client, calls = serving(answer('45.83.91.9'))
+    warnings = []
+    options = { client: client, on_warn: ->(m) { warnings << m } }
+    body = request_through(remote_ip_stack(**options), remote_addr: '10.0.0.5',
+                                                       headers: { 'X-Forwarded-For' => '45.83.91.9' })
+    assert_equal '45.83.91.9', body['ip']
+
+    priority = Rack::Request.forwarded_priority
+    begin
+      Rack::Request.forwarded_priority = [:x_forwarded]
+      [remote_ip_stack(**options), InternetData::Rails::Middleware.new(APP, **options)].each do |stack|
+        [['10.0.0.5', { 'Forwarded' => "for=#{PUBLIC_IP}", 'X-Forwarded-For' => '45.83.91.9' }],
+         ['45.83.91.9', { 'Forwarded' => "for=#{PUBLIC_IP}" }]].each do |peer, headers|
+          body = request_through(stack, remote_addr: peer, headers: headers)
+          assert_equal '45.83.91.9', body['ip'], headers.inspect
+        end
+      end
+    ensure
+      Rack::Request.forwarded_priority = priority
+    end
+    assert_empty warnings
+    assert_equal 5, calls.length
+  end
+
+  def test_no_warning_behind_a_trusted_proxy_without_the_header_or_with_the_apps_selector
+    client, = serving(answer(PUBLIC_IP))
+    warnings = []
+    on_warn = ->(m) { warnings << m }
+    forwarded = { 'X-Forwarded-For' => PUBLIC_IP }
+    [
+      [remote_ip_stack(client: client, on_warn: on_warn), '10.0.0.5', forwarded],
+      [remote_ip_stack(client: client, on_warn: on_warn), '127.0.0.1', forwarded],
+      [remote_ip_stack(proxies: [IPAddr.new('45.83.91.0/24')], client: client, on_warn: on_warn),
+       '45.83.91.9', forwarded],
+      [remote_ip_stack(proxies: ['45.83.91.9'], client: client, on_warn: on_warn), '45.83.91.9', forwarded],
+      [remote_ip_stack(client: client, on_warn: on_warn), PUBLIC_IP, {}],
+      [remote_ip_stack(client: client, on_warn: on_warn, ip_selector: lambda(&:ip)), '45.83.91.9', forwarded]
+    ].each do |stack, peer, headers|
+      request_through(stack, remote_addr: peer, headers: headers)
+    end
+
+    assert_empty warnings
+  end
+
+  def remote_ip_stack(proxies: nil, **options)
+    require 'action_dispatch'
+    ActionDispatch::RemoteIp.new(InternetData::Rails::Middleware.new(APP, **options), true, proxies)
+  end
+
+  def request_through(stack, remote_addr:, headers: {})
+    env = headers.transform_keys { |k| "HTTP_#{k.upcase.tr('-', '_')}" }
+    JSON.parse(Rack::MockRequest.new(stack).get('/', env.merge('REMOTE_ADDR' => remote_addr)).body)
+  end
+
+  def test_a_header_selector_reads_the_edge_that_writes_it
+    client, calls = serving(answer('45.83.91.9'))
+    _, body = call(client: client,
+                   ip_selector: InternetData::Rails.header_ip_selector('CF-Connecting-IP'),
+                   headers: { 'CF-Connecting-IP' => '45.83.91.9' })
+
+    assert_equal '45.83.91.9', body['ip']
+    assert_equal 1, calls.length
+  end
+
+  def test_a_private_client_address_is_answered_locally_and_never_blocks
+    client, calls = serving(answer(PUBLIC_IP))
+    status, body = call(client: client, block_condition: { 'location' => { 'country' => 'AT' } },
+                        on_warn: ->(_m) {})
+
+    assert_equal 200, status, 'local development must not lock you out of your own app'
+    assert body['bogon']
+    assert_empty calls
+  end
+
+  def test_a_condition_that_constrains_nothing_is_refused_at_construction
+    error = assert_raises(ArgumentError) do
+      InternetData::Rails::Middleware.new(APP, block_condition: { 'is_vpn' => false })
+    end
+    assert_match(/constrains nothing/, error.message)
+  end
+
+  def test_corpus_conditions
+    MIDDLEWARE['conditions'].each do |c|
+      why = "#{c['name']}: #{c['why']}"
+      ip = c['bogon'] || c['body']['ip']
+      client, = serving(c['body'] || { 'ip' => ip })
+      warnings = []
+      status, = call(client: client, ip_selector: ->(_r) { ip },
+                     block_condition: c['condition'], on_warn: ->(m) { warnings << m })
+
+      assert_equal(c['expect']['blocked'] ? 403 : 200, status, why)
+      reported = warnings.grep(/does not include/)
+      assert_equal(c['expect']['missing'].empty? ? 0 : 1, reported.length, why)
+      c['expect']['missing'].each { |m| assert_match(/#{m}/, reported.first, why) }
+      Typhoeus::Expectation.clear
+    end
+  end
+end
