@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff.
 
+## 1.0.1 - 2026-11-14
+
+### Fixes
+
+- Require internetdata 2.11.1: a 403 can mean the key lacks the ip.lookup scope ([`9641381`](https://github.com/internetdata/sdk-ruby-rails/commit/9641381a97e9d015377041e769a73448ccbb827a))
+
 ## 1.0.0 - 2026-11-14
 
 ### Features
