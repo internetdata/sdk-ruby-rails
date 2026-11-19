@@ -2,6 +2,13 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff.
 
+## 1.0.2 - 2026-11-19
+
+### Fixes
+
+- README: the gem needs libcurl at runtime ([`e9d7868`](https://github.com/internetdata/sdk-ruby-rails/commit/e9d7868db87b0e9d2e97ce7dc70d8ddcc7031077))
+- Require internetdata 2.14.2: a reduced answer is cached a minute at most ([`9339e38`](https://github.com/internetdata/sdk-ruby-rails/commit/9339e38d880f72e69be2ab8c16be6200cbe4697d))
+
 ## 1.0.1 - 2026-11-14
 
 ### Fixes
