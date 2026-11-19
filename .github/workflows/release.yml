@@ -3,16 +3,6 @@ name: Release
 on:
   push:
     tags: ['v*']
-  # A re-run uses the workflow as it was at the tag; this publishes an existing tag with
-  # the file as it stands.
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: The vN.N.N tag to publish
-        required: true
-
-env:
-  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   publish:
@@ -25,8 +15,6 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v7
-        with:
-          ref: refs/tags/${{ env.TAG }}
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.4'
@@ -36,35 +24,22 @@ jobs:
       # 1.0.0, or fails as "already pushed" with a confusing message.
       - name: Tag must match the gem version
         run: |
-          tag="${TAG#v}"
+          tag="${GITHUB_REF_NAME#v}"
           version="$(ruby -Ilib -e 'require "internetdata/rails/version"; print InternetData::Rails::VERSION')"
           if [ "$tag" != "$version" ] ; then
             echo "tag $tag does not match InternetData::Rails::VERSION $version" >&2
             exit 1
           fi
       - run: bundle exec rake test
-      # RubyGems creates a gem through trusted publishing only for the account the exchange
-      # names, which no configure-rubygems-credentials release can pass (v2.1.0): 152649 is
-      # `mslm`, whose pending publisher creates internetdata-rails.
-      - name: RubyGems key for the mslm account
-        run: |
-          set -o pipefail
-          jwt="$(curl -sS --fail-with-body -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=rubygems.org" | jq -r .value)"
-          if ! jq -n --arg jwt "$jwt" '{jwt: $jwt, owner: "152649"}' | curl -sS --fail-with-body -H 'Content-Type: application/json' --data @- -o exchange.json https://rubygems.org/api/v1/oidc/trusted_publisher/exchange_token ; then
-            cat exchange.json >&2
-            exit 1
-          fi
-          key="$(jq -r .rubygems_api_key exchange.json)"
-          rm exchange.json
-          echo "::add-mask::${key}"
-          echo "GEM_HOST_API_KEY=${key}" >> "$GITHUB_ENV"
+      # No floating major tag exists for this action, so it is pinned exactly.
+      - uses: rubygems/configure-rubygems-credentials@v2.1.0
       - name: Build and push
         run: |
           # `gem build -o` writes the file but will not create its parent,
           # so a clean checkout fails on ENOENT before it ever reaches push.
           mkdir -p pkg
-          gem build internetdata-rails.gemspec -o "pkg/internetdata-rails-${TAG#v}.gem"
-          gem push "pkg/internetdata-rails-${TAG#v}.gem"
+          gem build internetdata-rails.gemspec -o "pkg/internetdata-rails-${GITHUB_REF_NAME#v}.gem"
+          gem push "pkg/internetdata-rails-${GITHUB_REF_NAME#v}.gem"
 
   # This version's section of CHANGELOG.md, as the tag's GitHub Release. It
   # waits for the publish, so no release page names a version the registry
@@ -76,21 +51,19 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
-        with:
-          ref: refs/tags/${{ env.TAG }}
       - name: GitHub Release from CHANGELOG.md
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          version="${TAG#v}"
+          version="${GITHUB_REF_NAME#v}"
           awk -v v="$version" '/^## /{ if (found) exit; found = ($2 == v); next } found' CHANGELOG.md > notes.md
           if ! grep -q '^### ' notes.md ; then
             echo "CHANGELOG.md has no section for ${version}" >&2
             exit 1
           fi
-          if gh release view "$TAG" > /dev/null 2>&1 ; then
-            gh release edit "$TAG" --notes-file notes.md
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 ; then
+            gh release edit "$GITHUB_REF_NAME" --notes-file notes.md
           else
-            gh release create "$TAG" --title "$TAG" --notes-file notes.md --verify-tag
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag
           fi
