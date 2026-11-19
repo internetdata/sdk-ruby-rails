@@ -15,7 +15,7 @@ It is Rack middleware, so it works in Sinatra, Hanami, Roda or a bare Rack app t
 bundle add internetdata-rails
 ```
 
-Requires Ruby 3.3 or newer.
+Requires Ruby 3.3 or newer, and libcurl at runtime, which the `curl` package brings on Debian and Alpine. The Dockerfile Rails generates already installs it.
 
 Without an API key a lookup is on Unlimited, the free plan: the country, the network and the company behind the address, Tor, relay, anycast, carrier and satellite space and the service flags, with no daily or monthly cap. Every lookup your app makes comes from your server's one address, though, so a busy site will see bursts refused. A paid plan answers every field, VPN, the proxy flags, hosting, CDN and the city among them; create a key in the [console](https://app.internetdata.io). A free account tries every field, 100 lookups a day.
 
