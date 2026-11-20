@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff.
 
+## 1.0.4 - 2026-11-20
+
+### Features
+
+- Require internetdata 2.15.0: a paid domain answer's hosting, co-hosted domains, home page, redirects and backlinks ([`44e3c68`](https://github.com/internetdata/sdk-ruby-rails/commit/44e3c6813a8f5ffe0d8abd8a4999c38abd657f8d))
+
 ## 1.0.3 - 2026-11-20
 
 ### Fixes
