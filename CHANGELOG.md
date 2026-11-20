@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff.
 
+## 1.0.3 - 2026-11-20
+
+### Fixes
+
+- Require internetdata 2.14.3: its docs no longer give the trial a count ([`5d1cdfa`](https://github.com/internetdata/sdk-ruby-rails/commit/5d1cdfafc6c33fd5f2774cf3d4b0681edbe0335b))
+
 ## 1.0.2 - 2026-11-19
 
 ### Fixes
