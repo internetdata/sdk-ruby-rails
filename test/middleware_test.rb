@@ -311,6 +311,26 @@ class MiddlewareTest < Minitest::Test
     assert_empty calls
   end
 
+  # The bot flag arrived with a re-pin: a condition on it reaches the core from
+  # a public peer, refuses a crawler's address and lets a person's through,
+  # with no warning, since every plan answers it.
+  def test_a_condition_on_the_bot_flag_refuses_a_bot_from_a_public_peer
+    calls = stub_lookups(
+      '66.249.66.1' => { body: answer('66.249.66.1', 'is_bot' => true) },
+      PUBLIC_IP => { body: answer(PUBLIC_IP) },
+    )
+    client = InternetData::Client.new(cache: false, retries: 0)
+    warnings = []
+    statuses = ['66.249.66.1', PUBLIC_IP].map do |peer|
+      call(client: client, remote_addr: peer, block_condition: { is_bot: true },
+           on_warn: ->(m) { warnings << m }).first
+    end
+
+    assert_equal [403, 200], statuses
+    assert_equal 2, calls.length
+    assert_empty warnings
+  end
+
   def test_a_condition_that_constrains_nothing_is_refused_at_construction
     error = assert_raises(ArgumentError) do
       InternetData::Rails::Middleware.new(APP, block_condition: { 'is_vpn' => false })
