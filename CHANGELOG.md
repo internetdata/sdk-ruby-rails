@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff.
 
+## 1.0.5 - 2026-11-22
+
+### Features
+
+- Require internetdata 2.16.0: whether a bot uses an address, and whose ([`c1a8535`](https://github.com/internetdata/sdk-ruby-rails/commit/c1a85353cf6d2f50e66579cc15db8ff6b0ba3a4e))
+
 ## 1.0.4 - 2026-11-20
 
 ### Features
