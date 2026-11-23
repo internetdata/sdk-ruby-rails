@@ -24,6 +24,6 @@ Gem::Specification.new do |spec|
   spec.files = Dir['lib/**/*.rb'] + %w[LICENSE README.md]
   spec.require_paths = ['lib']
 
-  spec.add_dependency 'internetdata', '>= 2.16.0', '< 3'
+  spec.add_dependency 'internetdata', '>= 2.16.1', '< 3'
   spec.add_dependency 'rack', '>= 2.2'
 end
