@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff.
 
+## 1.0.6 - 2026-11-23
+
+### Fixes
+
+- Require internetdata 2.16.1, on spec 2026.11.22 ([`433ca64`](https://github.com/internetdata/sdk-ruby-rails/commit/433ca64f85e9cad016a56dc5de008c222a60f73e))
+
 ## 1.0.5 - 2026-11-22
 
 ### Features
