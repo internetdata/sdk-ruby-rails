@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff.
 
+## 1.0.7 - 2026-11-24
+
+### Features
+
+- Require internetdata 2.17.0: a condition on a list member matches when any element does ([`f078f6a`](https://github.com/internetdata/sdk-ruby-rails/commit/f078f6a7de06d3274a240dfcea8a72a79168be02))
+
 ## 1.0.6 - 2026-11-23
 
 ### Fixes
