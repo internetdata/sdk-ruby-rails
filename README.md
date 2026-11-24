@@ -64,7 +64,7 @@ A condition is written in the shape of an answer, keyed by the same names the AP
 { resproxy: { hits: { gte: 5 } } }                           # a numeric threshold
 ```
 
-Symbol and string keys both work. Values are matched by equality, strings without regard to case. An Array means any-of. A Hash of `gte`/`gt`/`lte`/`lt` compares numbers, and every bound you give must hold, so two of them are a range. Members set to `false` or `nil` are ignored, so a condition states the signals you act on; one that constrains nothing would match every request, and is refused when the middleware is built rather than silently blocking all your traffic.
+Symbol and string keys both work. Values are matched by equality, strings without regard to case. An Array means any-of. A Hash of `gte`/`gt`/`lte`/`lt` compares numbers, and every bound you give must hold, so two of them are a range. A member the answer holds as a list, such as `pubproxy.protocols` or the `web` rows, matches when any element does, and a nested condition on one matches when every member of it matches the same element (`{ web: { port: 443 } }`). Members set to `false` or `nil` are ignored, so a condition states the signals you act on; one that constrains nothing would match every request, and is refused when the middleware is built rather than silently blocking all your traffic.
 
 Replace the refusal with `on_blocked`, which returns a Rack triplet:
 
