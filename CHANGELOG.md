@@ -2,6 +2,13 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff.
 
+## 1.1.0 - 2026-11-25
+
+### Features
+
+- Require internetdata 2.18.0: a lookup can send the request's user agent ([`f248ae0`](https://github.com/internetdata/sdk-ruby-rails/commit/f248ae018751a05b1ea2a33aa271fb6d3f4dbd6f))
+- allow_bots: let a crawler its operator vouches for through ([`147e812`](https://github.com/internetdata/sdk-ruby-rails/commit/147e812c31688f760b2a5f8c16bd489e1a8614c1))
+
 ## 1.0.7 - 2026-11-24
 
 ### Features
