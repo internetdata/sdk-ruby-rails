@@ -13,6 +13,9 @@ require 'internetdata/rails/railtie'
 class RailtieTest < Minitest::Test
   include TestHelper
 
+  GOOGLEBOT = 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
+  WARNINGS = []
+
   class App < ::Rails::Application
     config.eager_load = false
     config.logger = Logger.new(nil)
@@ -22,6 +25,8 @@ class RailtieTest < Minitest::Test
       client: InternetData::Client.new(cache: false, retries: 0),
       ip_selector: InternetData::Rails.header_ip_selector('X-Visitor'),
       block_condition: { location: { country: %w[CU IR AT] } },
+      allow_bots: true,
+      on_warn: ->(message) { WARNINGS << message },
     }
     routes.append { root to: ->(_env) { [200, {}, ['handler ran']] } }
   end
@@ -47,6 +52,27 @@ class RailtieTest < Minitest::Test
 
   def germany
     answer('45.83.91.2').fetch('location').merge('country' => 'DE', 'country_name' => 'Germany')
+  end
+
+  # `allow_bots` from config.internetdata: the request's own User-Agent reaches
+  # the API, and a verified crawler passes the condition it meets.
+  def test_allow_bots_reaches_the_middleware
+    sent = []
+    Typhoeus.stub(%r{\A#{Regexp.escape(BASE_URL)}/}).and_return do |request|
+      agent = (request.options[:params] || {}).transform_keys(&:to_s)['user_agent']
+      ip = address_of(request)
+      sent << [ip, agent]
+      verdict = ip == '45.83.91.3' ? 'verified' : 'spoofed'
+      json_response(200, answer(ip, 'user_agent' => { 'agent' => 'Googlebot', 'kind' => 'bot', 'verdict' => verdict }))
+    end
+    headers = { 'REMOTE_ADDR' => '127.0.0.1', 'HTTP_USER_AGENT' => GOOGLEBOT }
+    verified = Rack::MockRequest.new(App).get('/', headers.merge('HTTP_X_VISITOR' => '45.83.91.3'))
+    spoofed = Rack::MockRequest.new(App).get('/', headers.merge('HTTP_X_VISITOR' => '45.83.91.4'))
+
+    assert_equal [['45.83.91.3', GOOGLEBOT], ['45.83.91.4', GOOGLEBOT]], sent
+    assert_equal 200, verified.status
+    assert_equal 'handler ran', verified.body
+    assert_equal 403, spoofed.status
   end
 
   def test_it_sits_right_after_rails_own_remote_ip
