@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff.
 
+## 1.1.1 - 2026-11-26
+
+### Features
+
+- Require internetdata 2.19.0: a keyless answer is read without the bot, carrier, satellite and service flags ([`398b508`](https://github.com/internetdata/sdk-ruby-rails/commit/398b5088060a9dabd7d16de8dbc4fe1b93ed6fce))
+
 ## 1.1.0 - 2026-11-25
 
 ### Features
