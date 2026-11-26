@@ -17,7 +17,7 @@ bundle add internetdata-rails
 
 Requires Ruby 3.3 or newer, and libcurl at runtime, which the `curl` package brings on Debian and Alpine. The Dockerfile Rails generates already installs it.
 
-Without an API key a lookup is on Unlimited, the free plan: the country, the network and the company behind the address, Tor, relay, bot, anycast, carrier and satellite space and the service flags, with no daily or monthly cap. Every lookup your app makes comes from your server's one address, though, so a busy site will see bursts refused. A paid plan answers every field, VPN, the proxy flags, hosting, CDN and the city among them; create a key in the [console](https://app.internetdata.io). A free account tries every field.
+Without an API key a lookup is on Unlimited, the free plan: the country, the network and the company behind the address, Tor, relay and anycast space, with no daily or monthly cap. Every lookup your app makes comes from your server's one address, though, so a busy site will see bursts refused. A paid plan answers every field, VPN, the proxy flags, hosting, CDN and the city among them; create a key in the [console](https://app.internetdata.io). A free account tries every field.
 
 ```ruby
 # config/application.rb
@@ -52,11 +52,12 @@ config.internetdata = {
 }
 ```
 
-A condition is written in the shape of an answer, keyed by the same names the API uses, and only the members you name are considered, so it can refuse on anything in the answer. The country works on every plan, and so do the first three of these:
+A condition is written in the shape of an answer, keyed by the same names the API uses, and only the members you name are considered, so it can refuse on anything in the answer. The country works on every plan, and so do `is_tor`, `is_relay` and `is_anycast`; the rest need a paid plan or the trial:
 
 ```ruby
+[{ is_tor: true }, { is_relay: true }, { is_anycast: true }] # on every plan
 { asn: { type: "hosting" } }                                 # the network's type
-[{ is_anycast: true }, { is_satellite: true }]               # anycast and satellite space
+[{ is_carrier: true }, { is_satellite: true }]               # carrier and satellite space
 { is_bot: true }                                             # crawlers, monitors and scanners
 [{ is_hosting: true }, { is_cdn: true }]                     # traffic from servers, not people
 [{ is_vpn: true }, { is_tor: true }, { is_resproxy: true }]  # anonymity: a list is OR
@@ -141,7 +142,7 @@ Beyond a few million distinct visitors a day, stop calling the API per request: 
 
 ## Absent is not false
 
-Unlimited, with a key or without one, leaves out `is_vpn`, `is_hosting`, `is_cdn` and the four proxy flags, the detail behind them and `bot`, and the paid members inside `location`, `asn`, `company` and `abuse`, such as `location["city"]`. A member your plan does not include is `nil`, which means "not in your plan" rather than "checked, and no", and Ruby makes that easy to lose, since `nil` and `false` are both falsy.
+Unlimited, with a key or without one, leaves out `is_vpn`, `is_hosting`, `is_cdn`, the four proxy flags, `is_bot`, `is_carrier`, `is_satellite`, `is_ssh`, `is_smtp`, `is_web`, `is_dns_resolver` and `is_bittorrent`, the detail behind them, and the paid members inside `location`, `asn`, `company` and `abuse`, such as `location["city"]`. A member your plan does not include is `nil`, which means "not in your plan" rather than "checked, and no", and Ruby makes that easy to lose, since `nil` and `false` are both falsy.
 
 ```ruby
 lookup.result.vpn?            # true or false, never nil

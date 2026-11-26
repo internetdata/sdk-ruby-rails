@@ -311,13 +311,13 @@ class MiddlewareTest < Minitest::Test
     assert_empty calls
   end
 
-  # The bot flag arrived with a re-pin: a condition on it reaches the core from
-  # a public peer, refuses a crawler's address and lets a person's through,
-  # with no warning, since every plan answers it.
+  # A condition on the bot flag reaches the core from a public peer, refuses a
+  # crawler's address and lets a person's through, with no warning where the
+  # answers carry the flag, as a paid plan's do.
   def test_a_condition_on_the_bot_flag_refuses_a_bot_from_a_public_peer
     calls = stub_lookups(
       '66.249.66.1' => { body: answer('66.249.66.1', 'is_bot' => true) },
-      PUBLIC_IP => { body: answer(PUBLIC_IP) },
+      PUBLIC_IP => { body: answer(PUBLIC_IP, 'is_bot' => false) },
     )
     client = InternetData::Client.new(cache: false, retries: 0)
     warnings = []
@@ -329,6 +329,18 @@ class MiddlewareTest < Minitest::Test
     assert_equal [403, 200], statuses
     assert_equal 2, calls.length
     assert_empty warnings
+  end
+
+  # Unlimited's answer has no bot flag: the plan gap is reported, never read as false.
+  def test_a_condition_on_the_bot_flag_is_a_plan_gap_on_an_unlimited_answer
+    stub_lookups(PUBLIC_IP => { body: answer(PUBLIC_IP) })
+    warnings = []
+    status, = call(client: InternetData::Client.new(cache: false, retries: 0), remote_addr: PUBLIC_IP,
+                   block_condition: { is_bot: true }, on_warn: ->(m) { warnings << m })
+
+    assert_equal 200, status
+    assert_equal 1, warnings.length
+    assert_match(/names is_bot, which your plan does not include/, warnings.first)
   end
 
   def test_a_condition_that_constrains_nothing_is_refused_at_construction
