@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff.
 
+## 1.1.3 - 2026-11-28
+
+### Fixes
+
+- Require internetdata 2.20.1: a timeout past 2147483 seconds is refused where it is set ([`1671032`](https://github.com/internetdata/sdk-ruby-rails/commit/1671032479120ac50401db386dde70423b38d687))
+
 ## 1.1.2 - 2026-11-28
 
 ### Features
