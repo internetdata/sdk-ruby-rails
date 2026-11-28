@@ -12,6 +12,7 @@ class AllowBotsTest < Minitest::Test
   include TestHelper
 
   PEER = '66.249.66.1'
+  OTHER_PEER = '66.249.66.2'
   GOOGLEBOT = 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
 
   APP = ->(env) do
@@ -48,8 +49,8 @@ class AllowBotsTest < Minitest::Test
     end.to_app
   end
 
-  def get(app, user_agent = GOOGLEBOT)
-    env = { 'REMOTE_ADDR' => PEER }
+  def get(app, user_agent = GOOGLEBOT, peer = PEER)
+    env = { 'REMOTE_ADDR' => peer }
     env['HTTP_USER_AGENT'] = user_agent unless user_agent.nil?
     response = Rack::MockRequest.new(app).get('/', env)
     [response.status, response.status == 200 ? JSON.parse(response.body) : nil]
@@ -62,6 +63,29 @@ class AllowBotsTest < Minitest::Test
     assert_equal [GOOGLEBOT], sent, "the request's own User-Agent reaches the API"
     assert_equal 200, status
     assert_equal({ 'verdict' => 'verified', 'is_hosting' => true }, body)
+  end
+
+  def examplebot(number)
+    "Mozilla/5.0 (compatible; Examplebot/#{number}.0)"
+  end
+
+  # A visitor inventing an agent per request costs at most four lookups an hour:
+  # the fifth crawler agent from one address goes with no agent and is refused, a
+  # known one is sent again, and another address has its own four. The cache is
+  # off so every lookup reaches the origin, and the stack is built once, as a
+  # server builds it, since the core remembers the agents.
+  def test_one_address_is_looked_up_with_at_most_four_crawler_agents
+    sent = origin('verified')
+    client = InternetData::Client.new(api_key: 'k_readme', cache: false, retries: 0)
+    app = readme_app(allow_bots: true, client: client)
+
+    assert_equal [200, 200, 200, 200, 403], (1..5).map { |n| get(app, examplebot(n)).first }
+    assert_equal [examplebot(1), examplebot(2), examplebot(3), examplebot(4), nil], sent
+
+    assert_equal 200, get(app, examplebot(1)).first, 'a known agent is sent again'
+    assert_equal examplebot(1), sent.last
+    assert_equal 200, get(app, examplebot(5), OTHER_PEER).first, 'another address has its own four'
+    assert_equal examplebot(5), sent.last
   end
 
   def test_a_spoofed_or_not_bot_crawler_is_refused
