@@ -75,6 +75,41 @@ class RailtieTest < Minitest::Test
     assert_equal 403, spoofed.status
   end
 
+  # The README's Rails form, `config.internetdata = { api_key: ENV[...] }` and
+  # nothing else, with the key set and unset. The tests above hand the Railtie a
+  # `client:`, so a key it dropped on the way to the middleware passed them all.
+  # The Railtie's own initializer runs against a Rails middleware stack, since a
+  # second booted application in this process fails on the first one's frozen
+  # load paths. 45.83.91.1 is a public peer: a loopback or documentation address
+  # is a bogon, answered locally without a request.
+  def test_the_readme_form_sends_its_key_and_without_one_sends_none
+    saved = InternetData::Rails::Railtie.config.internetdata
+    saved_key = ENV.fetch('INTERNETDATA_API_KEY', nil)
+    [['k_readme', 'Bearer k_readme'], [nil, nil]].each do |key, header|
+      seen = []
+      Typhoeus.stub(%r{\A#{Regexp.escape(BASE_URL)}/}).and_return do |request|
+        seen << request.options[:headers]['Authorization']
+        json_response(200, answer('45.83.91.1'))
+      end
+      ENV['INTERNETDATA_API_KEY'] = key
+      config = ::Rails::Railtie::Configuration.new
+      config.internetdata = { api_key: ENV['INTERNETDATA_API_KEY'] }
+      stack = ActionDispatch::MiddlewareStack.new
+      stack.use ActionDispatch::RemoteIp
+      booting = Struct.new(:config, :middleware).new(config, stack)
+      InternetData::Rails::Railtie.instance.initializers.find { |i| i.name == 'internetdata.middleware' }.run(booting)
+
+      response = Rack::MockRequest.new(stack.build(App.routes)).get('/', 'REMOTE_ADDR' => '45.83.91.1')
+
+      assert_equal 'handler ran', response.body, key.inspect
+      assert_equal [header], seen, "the one lookup carried #{header.inspect} for #{key.inspect}"
+      Typhoeus::Expectation.clear
+    end
+  ensure
+    ENV['INTERNETDATA_API_KEY'] = saved_key
+    InternetData::Rails::Railtie.config.internetdata = saved
+  end
+
   def test_it_sits_right_after_rails_own_remote_ip
     stack = App.middleware.map(&:klass)
 
