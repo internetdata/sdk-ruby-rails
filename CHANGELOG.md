@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff.
 
+## 1.1.2 - 2026-11-28
+
+### Features
+
+- Require internetdata 2.20.0: allow_bots sends only a crawler's User-Agent, at most four an address ([`d0b1356`](https://github.com/internetdata/sdk-ruby-rails/commit/d0b1356d7198a0301568469518acc3ef7da45850))
+
 ## 1.1.1 - 2026-11-26
 
 ### Features
